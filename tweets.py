@@ -1,9 +1,9 @@
 import gensim
-from keras import Sequential
+from tensorflow.keras import Sequential
 from pathlib import Path
-from keras.layers import LSTM, Dense
-from keras.callbacks import ModelCheckpoint
-from keras.callbacks import LambdaCallback
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.callbacks import LambdaCallback
+from tensorflow.keras.callbacks import TensorBoard
 import numpy as np
 from functools import reduce
 from collections import Counter
@@ -11,6 +11,8 @@ from trainGenerator import DataGenerator
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.model_selection import train_test_split
+import os
+
 
 def data_prepare():
     with open("tweetsTrump.txt", errors="ignore") as f:
@@ -18,7 +20,7 @@ def data_prepare():
         tweets = []
         for tweet in content:
             if ((tweet.find("http") == -1) and (tweet.find("https") == -1) and (tweet.find("www")== -1)):
-                tweet = tweet.replace('“',' ').replace('”',' ').replace('. ',' ').replace(',',' ').replace('!',' ').replace('?',' ').replace('.@','@').replace('&amp;','and').replace(': ',' ').replace('– ',' ').replace('- ',' ').replace('— ',' ').replace('--',' ').replace('....','').replace('...','').replace('"','').replace(':…','').replace(':','').replace("'","").replace(" )",")").replace(").",")").replace('.','').replace('#',' #')
+                tweet = tweet.replace('“',' ').replace('”',' ').replace('. ',' ').replace(',',' ').replace('!',' ').replace('?',' ').replace('.@','@').replace('&amp;','and').replace(': ',' ').replace('– ',' ').replace('- ',' ').replace('— ',' ').replace('--',' ').replace('....',' ').replace('...',' ').replace('"','').replace(':…','').replace(':','').replace("'","").replace(" )",")").replace(").",")").replace('.','').replace('#',' #').replace('-','').replace('‘','').replace('-','').replace('()','').replace(';','')
                 tweet = gensim.parsing.preprocessing.strip_multiple_whitespaces(tweet)
                 tweet = tweet.strip() #remove initial and lingering white spaces
                 if not tweet.isspace() and tweet:
@@ -30,7 +32,7 @@ def data_prepare():
                     tweet = ' '.join(word for word in tweet.split(' ') if not word.__contains__('https'))
                 if tweet.find("www") != -1:
                     tweet = ' '.join(word for word in tweet.split(' ') if not word.__contains__('www'))
-                tweet = tweet.replace('“',' ').replace('”',' ').replace('. ',' ').replace(',',' ').replace('!',' ').replace('?',' ').replace('.@','@').replace('&amp;','and').replace(': ',' ').replace('– ',' ').replace('- ',' ').replace('— ',' ').replace('--',' ').replace('....','').replace('...','').replace('"','').replace(':…','').replace(':','').replace("'","").replace(" )",")").replace(").",")").replace('.','').replace('#',' #')
+                tweet = tweet.replace('“',' ').replace('”',' ').replace('. ',' ').replace(',',' ').replace('!',' ').replace('?',' ').replace('.@','@').replace('&amp;','and').replace(': ',' ').replace('– ',' ').replace('- ',' ').replace('— ',' ').replace('--',' ').replace('....',' ').replace('...',' ').replace('"','').replace(':…','').replace(':','').replace("'","").replace(" )",")").replace(").",")").replace('.','').replace('#',' #').replace('-','').replace('‘','').replace('-','').replace('()','').replace(';','')
                 tweet = gensim.parsing.preprocessing.strip_multiple_whitespaces(tweet)
                 tweet = tweet.strip() #remove initial and lingering white spaces
                 if not tweet.isspace() and tweet:
@@ -77,7 +79,7 @@ def word2vec_train():
     model = gensim.models.Word2Vec(
         documents,
         size=100,
-        window=5,
+        window=10,
         min_count=1)
 
     model.train(documents, total_examples=len(documents), epochs=10)
@@ -95,26 +97,33 @@ def lstm_model(emdedding_size,maxlen):
 
 
 def sample(model, word_vector, mode):
+    wV = word_vector.reshape(100)
     if(mode == 'greedy'):
-        candidate = model.wv.similar_by_vector(word_vector, topn=1)
+        candidate = model.wv.similar_by_vector(wV, topn=5)
         return candidate[0][0]
     else:
         #randomly select one of the 5 most similar words
-        candidates = model.wv.similar_by_vector(word_vector, topn=5)
-        selected = np.random.choice(candidates[0], 1,  p=[0.3, 0.25, 0.2, 0.15, 0.1])
-        return selected[0]
+        candidates = model.wv.similar_by_vector(wV, topn=3)
+        ind = np.random.randint(3,size=1)
+        #selected = np.random.choice(candidates[0], 1,  p=[0.3, 0.25, 0.2, 0.15, 0.1])
+        selected = candidates[int(ind)][0]
+        return selected
 
-def generate_next(model, text, num_generated=10):
-    generatedText = text.lower.split()
-    wordVecs = []
-    for word in text.lower.split():
-        if word in model.wv.vocab:
-            wordVec = model.wv[word]
-        else:
-            wordVec = np.zeros(100)
-        wordVecs.append(wordVec)
+
+def generate_next(model, text, num_generated=30):
+    generatedText = text.split()
     for i in range(num_generated):
-        prediction = nn_model.predict(x=np.array(wordVecs).reshape(1,len(text),100))  # prediction will be a vector of 100 numbers
+        pad = np.repeat("padchar", 60 - len(generatedText)).tolist()
+        curText = pad + generatedText
+        wordVecs = []
+        for word in curText: 
+            if word in model.wv.vocab:
+                wordVec = model.wv[word]
+            else:
+                wordVec = np.zeros(100)
+            wordVecs.append(wordVec)
+        x = np.array(wordVecs).reshape(1,len(curText),100)
+        prediction = nn_model.predict(x)  # prediction will be a vector of 100 numbers
         pred_word = sample(model, prediction, mode='greedy')
         generatedText.append(pred_word)
         if (pred_word == 'endchar'):
@@ -123,11 +132,18 @@ def generate_next(model, text, num_generated=10):
 
 
 def on_epoch_end(epoch, _):
-    #do weight checkpoint
-    filepath="weights-improvement-{epoch:02d}-{loss:.4f}.hdf5"
-    ModelCheckpoint(filepath, monitor='loss', save_weights_only=True, mode='min', period=10)
-    
-    #generate text
+    # do weight checkpoint
+    if epoch%5 == 0:
+        '''
+        model_json = nn_model.to_json()
+        with open("Checkpoints/model-epoch:" + str(epoch) + ".json", "w") as json_file:
+            json_file.write(model_json)
+        '''
+
+        path = os.path.join("Checkpoints", "model-epoch-" + str(epoch) + "." + "h5")
+        nn_model.save_weights(path)
+        print("Saved model to disk")
+
     texts = [] 
     max_seeds = 6
     cur_seeds = 0
@@ -148,7 +164,8 @@ def on_epoch_end(epoch, _):
             file.write('%s... -> %s' % (text, sample))
             file.write("\n")
         file.write("\n")
-    
+
+
 def display_closestwords_tsnescatterplot(model, word):
     
     arr = np.empty((0,100), dtype='f')
@@ -178,8 +195,9 @@ def display_closestwords_tsnescatterplot(model, word):
         plt.annotate(label, xy=(x, y), xytext=(0, 0), textcoords='offset points')
     plt.xlim(x_coords.min()+0.05, x_coords.max()+0.05)
     plt.ylim(y_coords.min()+0.05, y_coords.max()+0.05)
+    plt.savefig('tsne_'+str(word)+'.png')
     plt.show()
-    plt.savefig('tsne_'+str(word)+'.pdf')
+
 
 def generateTrainAndValidationSet(sentences, maxlen):
     train_x_file = Path("train_x.txt")
@@ -258,30 +276,48 @@ def generateTrainAndValidationSet(sentences, maxlen):
             for word in content:
                 val_Y.append(word.replace("\n", ""))
     return train_X, train_Y, val_X, val_Y
-            
+
+
 if __name__== "__main__":
-    #data_prepare()
+    data_prepare()
     maxlen, sentences = word2vec_train()
     model = gensim.models.Word2Vec.load("w2v_trump.model")
     print(model)
-    display_closestwords_tsnescatterplot(model, "trump")
-    display_closestwords_tsnescatterplot(model, "hillary")
+    display_closestwords_tsnescatterplot(model, "great")
+    display_closestwords_tsnescatterplot(model, "fake")
     pretrained_weights = model.wv.vectors
     vocab_size, embedding_size = pretrained_weights.shape
-   
-    #set up neural network
+
     sentLens = []
     nn_model = lstm_model(embedding_size,maxlen)
+
+    initial_epoch = 0
+    #if directory not empty
+    if os.listdir('Checkpoints'):
+        checkpoints = os.listdir('Checkpoints')
+        last_weights = checkpoints[-1]
+        initial_epoch = last_weights.replace('model-epoch-', '').replace('.h5', '')
+        nn_model.load_weights("Checkpoints/"+last_weights)
+        print("Load weights from epoch " + str(initial_epoch))
+        print("Continue training from epoch " + str(initial_epoch))
+
     print(nn_model.summary())
     
     train_X, train_Y, val_X, val_Y = generateTrainAndValidationSet(sentences, maxlen)
-    #NEED TO USE KERAS UTILS SEQUENCE interface for generator
-    BATCH_SIZE = 20
+
+    BATCH_SIZE = 1000
+
     training_batch_generator = DataGenerator(train_X, train_Y, BATCH_SIZE, maxlen, model)
     validation_batch_generator = DataGenerator(val_X, val_Y, BATCH_SIZE, maxlen, model)
-    print("Training on", str(len(train_X)), "examples, validating on", str(len(val_X)),"examples.\n")
-    nn_model.fit_generator(generator=training_batch_generator,
-    epochs=100, verbose=1,
-    callbacks=[LambdaCallback(on_epoch_end=on_epoch_end)],
-    validation_data=validation_batch_generator)
 
+    print("Training on", str(len(train_X)), "examples, validating on", str(len(val_X)),"examples.\n")
+
+    if not int(initial_epoch) == 0:
+        initial_epoch = int(initial_epoch)+1
+
+    # launch TensorBoard (data won't show up until after the first epoch)
+    tensorboard = TensorBoard(log_dir='./logs', histogram_freq=0, write_graph=True, write_images=True)
+    nn_model.fit_generator(generator=training_batch_generator, initial_epoch= int(initial_epoch), epochs=600, verbose=1,
+                           callbacks=[LambdaCallback(on_epoch_end=on_epoch_end), tensorboard],
+                           validation_data=validation_batch_generator)
+    

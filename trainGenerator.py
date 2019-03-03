@@ -5,24 +5,8 @@ Created on Mon Dec 10 15:59:00 2018
 @author: ATheb
 """
 import numpy as np
-from keras.utils import Sequence
-import gensim
-
-  #  embedd training data
-  #   for i in range(0,len(train_X)):
-  #       goal = train_Y[i]
-  #       for t in range(0,len(train_X[i])):
-  #          word = train_X[i][t]
-  #           if word in model.wv.vocab:
-  #               wordVec = model.wv[word]
-  #           else:
-  #               wordVec = np.zeros(100) # if word unknown (e.g. padchar) assign 0 vector
-  #           train_X[i][t] = wordVec
-  #       if goal in model.wv.vocab: 
-  #           train_Y[i] = model.wv[goal]
-  #       else:
-  #           train_Y[i]=np.zeros(100)  
-            
+from tensorflow.keras.utils import Sequence
+import gensim   
     
 class DataGenerator(Sequence):
     def __init__(self, sentence_list, next_word_list, batch_size, maxlen, model):
